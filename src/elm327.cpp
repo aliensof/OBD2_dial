@@ -2,6 +2,7 @@
 #include "parse.h"
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <Preferences.h>
 
 // NimBLE callbacks are C-style; single dongle, so plain statics are fine.
 static NimBLEClient* s_client = nullptr;
@@ -22,10 +23,31 @@ class ClientCb : public NimBLEClientCallbacks {
 };
 static ClientCb s_clientCb;
 
+static Preferences s_prefs;
+
 void Elm327::begin()
 {
     s_rxMutex = xSemaphoreCreateMutex();
     NimBLEDevice::init("");
+    s_prefs.begin("obd2");
+    m_addr = s_prefs.getString("addr", "").c_str();
+    m_addrType = s_prefs.getUChar("type", 0);
+}
+
+void Elm327::saveDongle(const BleDev& d)
+{
+    m_addr = d.addr;
+    m_addrType = d.addrType;
+    s_prefs.putString("addr", d.addr.c_str());
+    s_prefs.putUChar("type", d.addrType);
+    disconnect();
+}
+
+void Elm327::disconnect()
+{
+    if (s_client && s_client->isConnected()) s_client->disconnect();
+    s_connected = false;
+    m_proto = false;
 }
 
 bool Elm327::isConnected() const
@@ -69,9 +91,9 @@ static bool findUartChars(NimBLEClient* client, NimBLERemoteCharacteristic** out
     return false;
 }
 
-std::vector<std::string> Elm327::scanBle()
+std::vector<BleDev> Elm327::scanBle()
 {
-    std::vector<std::string> out;
+    std::vector<BleDev> out;
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->setActiveScan(true);
     NimBLEScanResults results = scan->start(5, false);
@@ -82,7 +104,11 @@ std::vector<std::string> Elm327::scanBle()
         char buf[32];
         snprintf(buf, sizeof(buf), "%s%s %ddB", looksLikeObd(d) ? "*" : "", name.c_str(),
                  d.getRSSI());
-        out.push_back(buf);
+        BleDev dev;
+        dev.label = buf;
+        dev.addr = d.getAddress().toString();
+        dev.addrType = d.getAddress().getType();
+        out.push_back(dev);
     }
     return out;
 }
@@ -90,33 +116,18 @@ std::vector<std::string> Elm327::scanBle()
 bool Elm327::connect()
 {
     m_proto = false;
-    m_status = "Scanning for OBD2...";
-
-    NimBLEScan* scan = NimBLEDevice::getScan();
-    scan->setActiveScan(true);
-    NimBLEScanResults results = scan->start(5, false);
-
-    int found = -1;
-    for (int i = 0; i < results.getCount(); i++) {
-        NimBLEAdvertisedDevice d = results.getDevice(i);
-        if (looksLikeObd(d)) {
-            found = i;
-            break;
-        }
-    }
-    if (found < 0) {
-        m_status = "Dongle not found";
+    if (m_addr.empty()) {
+        m_status = "No dongle chosen";
         return false;
     }
 
     m_status = "Connecting...";
-    NimBLEAdvertisedDevice dev = results.getDevice(found);
     if (!s_client) {
         s_client = NimBLEDevice::createClient();
         s_client->setClientCallbacks(&s_clientCb, false);
     }
-    if (!s_client->connect(&dev)) {
-        m_status = "Connect failed";
+    if (!s_client->connect(NimBLEAddress(m_addr, m_addrType))) {
+        m_status = "Dongle not in range";
         return false;
     }
     if (!findUartChars(s_client, &s_writeChr)) {

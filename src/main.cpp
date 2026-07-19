@@ -23,8 +23,9 @@ static std::vector<std::string> dtcs;
 static int dtcIdx = 0;
 static uint32_t confirmSince = 0;
 static bool demoMode = false; // browse the UI without a dongle
-static std::vector<std::string> scanResults;
-static int scanOff = 0;
+static std::vector<BleDev> scanResults;
+static std::vector<std::string> scanLabels;
+static int scanSel = 0;
 
 static void beep()
 {
@@ -117,7 +118,7 @@ static void drawGauge()
             break;
         }
         case P_SCAN:
-            ui.message("BLE SCAN", "tap to scan");
+            ui.message("BLE SCAN", elm.hasSaved() ? "tap to scan" : "tap to scan & pick dongle");
             break;
     }
 }
@@ -142,13 +143,14 @@ void setup()
     ui.connecting("Starting...");
     elm.begin();
     encAnchor = M5Dial.Encoder.read();
+    if (!elm.hasSaved()) page = P_SCAN; // first run: pick a dongle
 }
 
 void loop()
 {
     M5Dial.update();
 
-    if (!elm.isConnected() && !demoMode) {
+    if (!elm.isConnected() && !demoMode && elm.hasSaved()) {
         mode = GAUGES;
         ui.connecting(elm.status());
         // 2s tap window before each (blocking) connect attempt
@@ -184,9 +186,11 @@ void loop()
             if (page == P_SCAN && tap) {
                 ui.message("Scanning...", "5 sec");
                 scanResults = elm.scanBle();
-                scanOff = 0;
+                scanLabels.clear();
+                for (const BleDev& dev : scanResults) scanLabels.push_back(dev.label);
+                scanSel = 0;
                 mode = SCAN_LIST;
-                ui.list("BLE DEVICES", scanResults, scanOff);
+                ui.list("BLE DEVICES", scanLabels, scanSel);
                 break;
             }
             if (page == P_DTC && tap) {
@@ -238,17 +242,27 @@ void loop()
             break;
 
         case SCAN_LIST:
-            if (tap) {
+            if (hold || (scanResults.empty() && tap)) {
                 mode = GAUGES;
                 lastPoll = 0;
                 break;
             }
+            if (tap) {
+                elm.saveDongle(scanResults[scanSel]);
+                beep();
+                ui.message("Dongle saved", "connecting...");
+                delay(1000);
+                demoMode = false;
+                mode = GAUGES;
+                page = P_RPM;
+                lastPoll = 0;
+                break;
+            }
             if (d) {
-                scanOff += d;
-                int maxOff = (int)scanResults.size() - 5;
-                if (scanOff > maxOff) scanOff = maxOff;
-                if (scanOff < 0) scanOff = 0;
-                ui.list("BLE DEVICES", scanResults, scanOff);
+                scanSel += d;
+                if (scanSel >= (int)scanResults.size()) scanSel = scanResults.size() - 1;
+                if (scanSel < 0) scanSel = 0;
+                ui.list("BLE DEVICES", scanLabels, scanSel);
             }
             break;
     }

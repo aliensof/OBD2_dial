@@ -122,7 +122,7 @@ void Ui::confirmClear()
     push();
 }
 
-void Ui::list(const char* title, const std::vector<std::string>& items, int offset)
+void Ui::list(const char* title, const std::vector<std::string>& items, int sel)
 {
     clear();
     canvas.drawArc(120, 120, 110, 118, 0, 360, TFT_DARKGREY);
@@ -131,15 +131,25 @@ void Ui::list(const char* title, const std::vector<std::string>& items, int offs
     canvas.setTextColor(TFT_CYAN);
     canvas.drawString(title, 120, 45);
     canvas.setFont(&fonts::Font2);
-    canvas.setTextColor(TFT_WHITE);
     if (items.empty()) {
         canvas.setTextColor(TFT_SILVER);
         canvas.drawString("nothing found", 120, 120);
+        canvas.setTextColor(TFT_DARKGREY);
+        canvas.drawString("tap = back", 120, 205);
+        push();
+        return;
     }
-    for (int i = 0; i < 5 && offset + i < (int)items.size(); i++)
-        canvas.drawString(items[offset + i].c_str(), 120, 78 + i * 24);
+    int off = sel - 2;
+    if (off > (int)items.size() - 5) off = (int)items.size() - 5;
+    if (off < 0) off = 0;
+    for (int i = 0; i < 5 && off + i < (int)items.size(); i++) {
+        bool isSel = (off + i == sel);
+        if (isSel) canvas.fillRoundRect(20, 78 + i * 24 - 11, 200, 22, 6, TFT_NAVY);
+        canvas.setTextColor(isSel ? TFT_ORANGE : TFT_WHITE);
+        canvas.drawString(items[off + i].c_str(), 120, 78 + i * 24);
+    }
     canvas.setTextColor(TFT_DARKGREY);
-    canvas.drawString("tap = back", 120, 205);
+    canvas.drawString("tap = choose   hold = back", 120, 205);
     push();
 }
 

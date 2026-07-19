@@ -15,6 +15,6 @@ public:
     void dtcCode(int idx, int total, const char* code, const char* desc);
     void confirmClear();
     void message(const char* line1, const char* line2);
-    // Scrollable text list; shows up to 5 items starting at offset.
-    void list(const char* title, const std::vector<std::string>& items, int offset);
+    // Scrollable list with highlighted selection (5 visible items).
+    void list(const char* title, const std::vector<std::string>& items, int sel);
 };
