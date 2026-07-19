@@ -125,6 +125,7 @@ bool Elm327::connect()
     if (!s_client) {
         s_client = NimBLEDevice::createClient();
         s_client->setClientCallbacks(&s_clientCb, false);
+        s_client->setConnectTimeout(5); // default 30s freezes the UI far too long
     }
     if (!s_client->connect(NimBLEAddress(m_addr, m_addrType))) {
         m_status = "Dongle not in range";

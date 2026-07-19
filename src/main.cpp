@@ -9,6 +9,21 @@
 #define ENC_PER_DETENT 4
 #define POLL_MS 300
 
+// M5Dial lib's Encoder never gets interrupts (its ESP32 pin table stops at
+// GPIO39; the dial is on 40/41), so we count quadrature edges ourselves.
+static volatile long s_encCount = 0;
+static volatile uint8_t s_encState = 0;
+
+static void IRAM_ATTR encIsr()
+{
+    // index = old state << 2 | new state; ponytail: flip signs if direction feels reversed
+    static const int8_t tbl[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
+    uint8_t s = ((uint8_t)digitalRead(DIAL_ENCODER_PIN_A) << 1) |
+                (uint8_t)digitalRead(DIAL_ENCODER_PIN_B);
+    s_encCount += tbl[(s_encState << 2) | s];
+    s_encState = s;
+}
+
 static Elm327 elm;
 static Ui ui;
 
@@ -35,7 +50,7 @@ static void beep()
 // Whole detents since last call; keeps partial counts.
 static int encDelta()
 {
-    long p = M5Dial.Encoder.read();
+    long p = s_encCount;
     int d = (int)((p - encAnchor) / ENC_PER_DETENT);
     if (d) encAnchor += (long)d * ENC_PER_DETENT;
     return d;
@@ -138,11 +153,19 @@ static void showDtcList()
 void setup()
 {
     auto cfg = M5.config();
-    M5Dial.begin(cfg, true, false); // encoder on, RFID off
+    M5Dial.begin(cfg, false, false); // our own encoder ISR below, RFID off
     ui.begin();
     ui.connecting("Starting...");
     elm.begin();
-    encAnchor = M5Dial.Encoder.read();
+
+    pinMode(DIAL_ENCODER_PIN_A, INPUT_PULLUP);
+    pinMode(DIAL_ENCODER_PIN_B, INPUT_PULLUP);
+    s_encState = ((uint8_t)digitalRead(DIAL_ENCODER_PIN_A) << 1) |
+                 (uint8_t)digitalRead(DIAL_ENCODER_PIN_B);
+    attachInterrupt(digitalPinToInterrupt(DIAL_ENCODER_PIN_A), encIsr, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(DIAL_ENCODER_PIN_B), encIsr, CHANGE);
+    encAnchor = s_encCount;
+
     if (!elm.hasSaved()) page = P_SCAN; // first run: pick a dongle
 }
 
@@ -165,6 +188,7 @@ void loop()
             }
             delay(20);
         }
+        ui.connecting("Connecting...");
         if (elm.connect()) {
             beep();
             lastPoll = 0;
