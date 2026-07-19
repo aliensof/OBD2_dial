@@ -32,6 +32,9 @@ public:
     // Send raw command, wait for '>' prompt or timeout, return full response.
     std::string cmd(const std::string& c, uint32_t timeoutMs = 3000);
 
+    // 5s BLE scan; "Name -60dB" per device, OBD-looking ones prefixed with '*'.
+    std::vector<std::string> scanBle();
+
 private:
     bool readPid(const char* pid, const char* echo, uint8_t* out, int n);
     bool m_proto = false;

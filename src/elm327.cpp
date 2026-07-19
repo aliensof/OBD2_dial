@@ -69,6 +69,24 @@ static bool findUartChars(NimBLEClient* client, NimBLERemoteCharacteristic** out
     return false;
 }
 
+std::vector<std::string> Elm327::scanBle()
+{
+    std::vector<std::string> out;
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    scan->setActiveScan(true);
+    NimBLEScanResults results = scan->start(5, false);
+    for (int i = 0; i < results.getCount(); i++) {
+        NimBLEAdvertisedDevice d = results.getDevice(i);
+        std::string name = d.haveName() ? d.getName() : d.getAddress().toString();
+        if (name.size() > 16) name.resize(16);
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%s%s %ddB", looksLikeObd(d) ? "*" : "", name.c_str(),
+                 d.getRSSI());
+        out.push_back(buf);
+    }
+    return out;
+}
+
 bool Elm327::connect()
 {
     m_proto = false;

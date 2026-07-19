@@ -12,8 +12,8 @@
 static Elm327 elm;
 static Ui ui;
 
-enum Page { P_RPM, P_SPEED, P_COOLANT, P_BATT, P_INTAKE, P_LOAD, P_DTC, PAGE_COUNT };
-enum Mode { GAUGES, DTC_LIST, DTC_CONFIRM };
+enum Page { P_RPM, P_SPEED, P_COOLANT, P_BATT, P_INTAKE, P_LOAD, P_DTC, P_SCAN, PAGE_COUNT };
+enum Mode { GAUGES, DTC_LIST, DTC_CONFIRM, SCAN_LIST };
 
 static Mode mode = GAUGES;
 static int page = P_RPM;
@@ -22,6 +22,9 @@ static uint32_t lastPoll = 0;
 static std::vector<std::string> dtcs;
 static int dtcIdx = 0;
 static uint32_t confirmSince = 0;
+static bool demoMode = false; // browse the UI without a dongle
+static std::vector<std::string> scanResults;
+static int scanOff = 0;
 
 static void beep()
 {
@@ -113,6 +116,9 @@ static void drawGauge()
             ui.dtcSummary(n == VAL_NONE ? -1 : n, mil);
             break;
         }
+        case P_SCAN:
+            ui.message("BLE SCAN", "tap to scan");
+            break;
     }
 }
 
@@ -142,15 +148,24 @@ void loop()
 {
     M5Dial.update();
 
-    if (!elm.isConnected()) {
+    if (!elm.isConnected() && !demoMode) {
         mode = GAUGES;
         ui.connecting(elm.status());
+        // 2s tap window before each (blocking) connect attempt
+        uint32_t t0 = millis();
+        while (millis() - t0 < 2000) {
+            M5Dial.update();
+            if (tapped()) {
+                demoMode = true;
+                beep();
+                lastPoll = 0;
+                return;
+            }
+            delay(20);
+        }
         if (elm.connect()) {
             beep();
             lastPoll = 0;
-        } else {
-            ui.connecting(elm.status());
-            delay(2000);
         }
         return;
     }
@@ -165,6 +180,14 @@ void loop()
                 page = ((page + d) % PAGE_COUNT + PAGE_COUNT) % PAGE_COUNT;
                 lastPoll = 0;
                 beep();
+            }
+            if (page == P_SCAN && tap) {
+                ui.message("Scanning...", "5 sec");
+                scanResults = elm.scanBle();
+                scanOff = 0;
+                mode = SCAN_LIST;
+                ui.list("BLE DEVICES", scanResults, scanOff);
+                break;
             }
             if (page == P_DTC && tap) {
                 ui.message("Reading...", "");
@@ -211,6 +234,21 @@ void loop()
             } else if (d || millis() - confirmSince > 8000) {
                 mode = DTC_LIST;
                 showDtcList();
+            }
+            break;
+
+        case SCAN_LIST:
+            if (tap) {
+                mode = GAUGES;
+                lastPoll = 0;
+                break;
+            }
+            if (d) {
+                scanOff += d;
+                int maxOff = (int)scanResults.size() - 5;
+                if (scanOff > maxOff) scanOff = maxOff;
+                if (scanOff < 0) scanOff = 0;
+                ui.list("BLE DEVICES", scanResults, scanOff);
             }
             break;
     }

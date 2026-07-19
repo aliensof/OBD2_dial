@@ -31,6 +31,8 @@ void Ui::connecting(const char* msg)
     canvas.setTextColor(TFT_WHITE);
     canvas.setFont(&fonts::Font2);
     canvas.drawString(msg, 120, 130);
+    canvas.setTextColor(TFT_DARKGREY);
+    canvas.drawString("tap = demo mode", 120, 170);
     canvas.drawArc(120, 120, 112, 116, 0, 360, TFT_DARKGREY);
     push();
 }
@@ -117,6 +119,27 @@ void Ui::confirmClear()
     canvas.drawString("tap = yes", 120, 140);
     canvas.setTextColor(TFT_DARKGREY);
     canvas.drawString("rotate = cancel", 120, 165);
+    push();
+}
+
+void Ui::list(const char* title, const std::vector<std::string>& items, int offset)
+{
+    clear();
+    canvas.drawArc(120, 120, 110, 118, 0, 360, TFT_DARKGREY);
+    canvas.setFont(&fonts::Font4);
+    canvas.setTextSize(1);
+    canvas.setTextColor(TFT_CYAN);
+    canvas.drawString(title, 120, 45);
+    canvas.setFont(&fonts::Font2);
+    canvas.setTextColor(TFT_WHITE);
+    if (items.empty()) {
+        canvas.setTextColor(TFT_SILVER);
+        canvas.drawString("nothing found", 120, 120);
+    }
+    for (int i = 0; i < 5 && offset + i < (int)items.size(); i++)
+        canvas.drawString(items[offset + i].c_str(), 120, 78 + i * 24);
+    canvas.setTextColor(TFT_DARKGREY);
+    canvas.drawString("tap = back", 120, 205);
     push();
 }
 
