@@ -30,6 +30,6 @@ cd test/host && g++ -std=c++11 -I../../src parse_check.cpp ../../src/parse.cpp -
 
 - The M5Dial library's encoder driver never gets interrupts (its ESP32 pin table stops at GPIO39; the encoder is on 40/41) — `src/main.cpp` counts quadrature edges with its own ISR instead.
 - NimBLE's default 30s connect timeout freezes a single-loop UI; it's capped at 5s.
-- Dongle must be **BLE** (ESP32-S3 has no Bluetooth Classic). Known good: Vgate iCar Pro BLE.
+- Dongle must be **BLE** (ESP32-S3 has no Bluetooth Classic) — Classic-only ELM327s pair with Android phones but are invisible to the Dial. Known good: Vgate iCar Pro 2S / iCar Pro BLE 4.0.
 
 Design notes: `docs/superpowers/specs/2026-07-18-obd2-dial-design.md`
