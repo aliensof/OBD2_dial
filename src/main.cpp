@@ -28,7 +28,11 @@ static Elm327 elm;
 static Ui ui;
 
 enum Page { P_RPM, P_SPEED, P_COOLANT, P_BATT, P_INTAKE, P_LOAD, P_DTC, P_SCAN, PAGE_COUNT };
-enum Mode { GAUGES, DTC_LIST, DTC_CONFIRM, SCAN_LIST };
+enum Mode { GAUGES, CODE_MENU, DTC_LIST, DTC_CONFIRM, SCAN_LIST };
+
+static const std::vector<std::string> kCodeMenu = {"Fault codes", "Clear faults",
+                                                   "Service reset"};
+static int menuSel = 0;
 
 static Mode mode = GAUGES;
 static int page = P_RPM;
@@ -218,12 +222,9 @@ void loop()
                 break;
             }
             if (page == P_DTC && tap) {
-                ui.message("Reading...", "");
-                dtcs = elm.readDtcs();
-                dtcIdx = 0;
-                mode = DTC_LIST;
-                showDtcList();
-                lastPoll = millis();
+                menuSel = 0;
+                mode = CODE_MENU;
+                ui.list("CODES", kCodeMenu, menuSel);
             }
             if (lastPoll == 0 || millis() - lastPoll >= POLL_MS) {
                 drawGauge();
@@ -231,10 +232,43 @@ void loop()
             }
             break;
 
-        case DTC_LIST:
-            if (tap || (dtcs.empty() && millis() - lastPoll > 2000)) {
+        case CODE_MENU:
+            if (hold) {
                 mode = GAUGES;
                 lastPoll = 0;
+                break;
+            }
+            if (tap) {
+                if (menuSel == 0) {
+                    ui.message("Reading...", "");
+                    dtcs = elm.readDtcs();
+                    dtcIdx = 0;
+                    mode = DTC_LIST;
+                    showDtcList();
+                    lastPoll = millis();
+                } else if (menuSel == 1) {
+                    mode = DTC_CONFIRM;
+                    confirmSince = millis();
+                    ui.confirmClear();
+                } else {
+                    ui.message("Service reset", "VW-only - not yet");
+                    delay(2000);
+                    ui.list("CODES", kCodeMenu, menuSel);
+                }
+                break;
+            }
+            if (d) {
+                menuSel += d;
+                if (menuSel >= (int)kCodeMenu.size()) menuSel = kCodeMenu.size() - 1;
+                if (menuSel < 0) menuSel = 0;
+                ui.list("CODES", kCodeMenu, menuSel);
+            }
+            break;
+
+        case DTC_LIST:
+            if (tap || (dtcs.empty() && millis() - lastPoll > 2000)) {
+                mode = CODE_MENU;
+                ui.list("CODES", kCodeMenu, menuSel);
                 break;
             }
             if (hold && !dtcs.empty()) {
@@ -260,8 +294,8 @@ void loop()
                 page = P_DTC;
                 lastPoll = 0;
             } else if (d || millis() - confirmSince > 8000) {
-                mode = DTC_LIST;
-                showDtcList();
+                mode = CODE_MENU;
+                ui.list("CODES", kCodeMenu, menuSel);
             }
             break;
 

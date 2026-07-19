@@ -79,7 +79,7 @@ void Ui::dtcSummary(int count, bool milOn)
         canvas.drawString("CHECK ENGINE", 120, 170);
     }
     canvas.setTextColor(TFT_DARKGREY);
-    canvas.drawString("tap to read", 120, 195);
+    canvas.drawString("tap = menu", 120, 195);
     push();
 }
 
