@@ -11,16 +11,22 @@ M5Stack Dial firmware that connects over BLE to an ELM327 OBD2 dongle and shows 
 ## Components
 
 - `src/parse.{h,cpp}` — pure functions, no Arduino deps: clean ELM responses, extract PID bytes, decode mode-03 DTC lists (CAN and K-line framing), DTC code → short description table. Host-testable.
-- `src/elm327.{h,cpp}` — BLE client: scan (known service UUIDs fff0/ffe0/18f0 or OBD-ish name), connect, auto-discover the notify+write characteristic pair, AT init (`ATZ,E0,L0,S0,H0,SP0`), blocking `cmd()` with timeout, typed getters (rpm, speed, coolant, intake, load, battery volts, DTC count/read/clear). Auto-reconnect on drop.
+- `src/elm327.{h,cpp}` — BLE client: the user picks their dongle once from a scan list (OBD-looking devices — service fff0/ffe0/18f0 or OBD-ish name — are marked `*`); the address is persisted in NVS and connected to directly (5s timeout) from then on. Auto-discovers the notify+write characteristic pair, AT init (`ATZ,E0,L0,S0,H0,SP0`), blocking `cmd()` with timeout, typed getters (rpm, speed, coolant, intake, load, battery volts, DTC count/read/clear). Auto-reconnect on drop.
 - `src/ui.{h,cpp}` — full-screen canvas drawing: connecting screen, gauge page (label / big value / unit / progress arc around the round edge), DTC summary, DTC code page, clear-confirm screen.
 - `src/main.cpp` — state machine and input glue.
 
 ## UI / interaction
 
-- Rotate encoder → switch pages: RPM, Speed, Coolant, Battery, Intake temp, Engine load, DTC.
+- Rotate encoder → switch pages: RPM, Speed, Coolant, Battery, Intake temp, Engine load, Codes, BLE Scan.
 - Gauge pages poll their PID ~3x/s; failed reads show `--`. Arc turns red near limits (rpm, coolant).
-- DTC page shows code count + CHECK ENGINE if MIL on. Tap (touch or button) → read codes; rotate scrolls one code per screen with description. Touch-hold → "Clear codes?" confirm screen; tap confirms (mode 04 + beep), anything else cancels.
-- No car/dongle → "Scanning…" screen, retry loop forever. Dongle connected but ignition off → gauges show `--`.
+- Codes page shows fault count + CHECK ENGINE if MIL on. Tap → menu (Fault codes / Clear faults / Service reset): fault codes scroll one per screen with description; clear shows a red confirm screen (tap confirms, mode 04 + beep); service reset is a stub — it needs VW TP2.0, not standard OBD2. Hold exits the menu.
+- BLE Scan page: tap to scan, rotate to highlight, tap to save a device as "my dongle" (persisted; replaces the previous choice). First boot lands here until a dongle is chosen.
+- Connect screen: tap enters demo mode (browse UI without hardware). Dongle out of range → 2s tap window + 5s connect attempt, looping. Connected but ignition off → gauges show `--`.
+
+## Hardware findings
+
+- M5Dial lib's encoder driver gets no interrupts on the dial's GPIO 40/41 (pin table stops at 39) → own quadrature ISR in `main.cpp`.
+- NimBLE default connect timeout (30s) blocks the loop → capped at 5s.
 
 ## Testing
 
