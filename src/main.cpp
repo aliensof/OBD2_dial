@@ -158,6 +158,9 @@ void setup()
 {
     auto cfg = M5.config();
     M5Dial.begin(cfg, false, false); // our own encoder ISR below, RFID off
+    Serial.begin(115200);
+    delay(300); // let USB CDC enumerate so the boot lines aren't lost
+    Serial.println("\n[boot] obd2-dial");
     ui.begin();
     ui.connecting("Starting...");
     elm.begin();

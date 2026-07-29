@@ -31,5 +31,8 @@ cd test/host && g++ -std=c++11 -I../../src parse_check.cpp ../../src/parse.cpp -
 - The M5Dial library's encoder driver never gets interrupts (its ESP32 pin table stops at GPIO39; the encoder is on 40/41) — `src/main.cpp` counts quadrature edges with its own ISR instead.
 - NimBLE's default 30s connect timeout freezes a single-loop UI; it's capped at 5s.
 - Dongle must be **BLE** (ESP32-S3 has no Bluetooth Classic) — Classic-only ELM327s pair with Android phones but are invisible to the Dial. Known good: Vgate iCar Pro 2S / iCar Pro BLE 4.0.
+- Notifications must be subscribed with **write-with-response** (`subscribe(true, cb, true)`). NimBLE defaults to a CCCD write *without* response, which the iCar Pro 2S silently drops: connect and discovery both report success, then every command times out with zero bytes. NimBLE's `subscribe()` also returns `true` when it can't find the CCCD at all, so its return value alone proves nothing.
+
+Serial logging needs `-DARDUINO_USB_CDC_ON_BOOT=1` (the StampS3 board sets `ARDUINO_USB_MODE=1` but not this, so `Serial` would go to UART0, not the USB-C port). Build with `-DOBD2_TRACE` to log every command and response.
 
 Design notes: `docs/superpowers/specs/2026-07-18-obd2-dial-design.md`

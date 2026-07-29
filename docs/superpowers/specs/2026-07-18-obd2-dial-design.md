@@ -27,6 +27,8 @@ M5Stack Dial firmware that connects over BLE to an ELM327 OBD2 dongle and shows 
 
 - M5Dial lib's encoder driver gets no interrupts on the dial's GPIO 40/41 (pin table stops at 39) → own quadrature ISR in `main.cpp`.
 - NimBLE default connect timeout (30s) blocks the loop → capped at 5s.
+- iCar Pro 2S (service 18F0, notify 2AF0 / write 2AF1) ignores a CCCD write sent *without* response, so `subscribe()` must pass `response=true`. Symptom was maximally misleading: link up, services found, subscribe "OK", writes accepted, and every read timing out empty. NimBLE's `subscribe()` also returns true when no CCCD exists — `findUartChars` now requires the 0x2902 descriptor before accepting a service.
+- Serial needs `-DARDUINO_USB_CDC_ON_BOOT=1`; the StampS3 board sets `ARDUINO_USB_MODE=1` only, so `Serial` lands on UART0 (GPIO43/44), not USB-C. `-DOBD2_TRACE` enables per-command logging.
 
 ## Testing
 
