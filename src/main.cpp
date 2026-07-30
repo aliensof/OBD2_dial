@@ -34,6 +34,33 @@ static const std::vector<std::string> kCodeMenu = {"Fault codes", "Pending codes
                                                    "Service reset"};
 static int menuSel = 0;
 
+// Session peaks, one slot per kPids row. VAL_NONE = nothing seen yet.
+static std::vector<int> pkMin, pkMax;
+
+static void resetPeaks()
+{
+    pkMin.assign(kPidCount, VAL_NONE);
+    pkMax.assign(kPidCount, VAL_NONE);
+}
+
+// Values worth shouting about even when you're looking at another page. These
+// are polled in the background, so keep the list short — each row costs one
+// command every WATCH_MS.
+// ponytail: thresholds are guesses for a warm VW-group engine; tune on the car.
+struct Watch {
+    uint8_t pid; // 0 = battery voltage via ATRV
+    int lo, hi;  // alarm outside this band
+    const char* msg;
+};
+static const Watch kWatch[] = {
+    {0x05, INT_MIN, 110, "COOLANT HOT"},  // fans run ~105, so 110 means trouble
+    {0x00, 115, INT_MAX, "VOLTAGE LOW"},  // tenths of a volt; alternator/belt
+};
+#define WATCH_MS 5000
+#define ALARM_REPEAT_MS 60000
+static uint32_t lastWatch = 0;
+static uint32_t lastAlarm = 0;
+
 // Gauge pages come from kPids, filtered to what this car answers; the battery,
 // codes and scan pages always follow them.
 static std::vector<int> gauges;
@@ -102,17 +129,24 @@ static void drawGauge()
     uint16_t color = TFT_GREEN;
 
     if (page < battPage()) {
-        const PidDef& p = kPids[gauges[page]];
+        int gi = gauges[page];
+        const PidDef& p = kPids[gi];
         int v = elm.readPid(p);
         fmtVal(buf, sizeof(buf), v);
+        char sub[24] = "";
         if (v != VAL_NONE) {
+            if (pkMax[gi] == VAL_NONE || v > pkMax[gi]) pkMax[gi] = v;
+            if (pkMin[gi] == VAL_NONE || v < pkMin[gi]) pkMin[gi] = v;
             frac = (float)(v - p.lo) / (p.hi - p.lo);
             if (frac > 0.85f) color = TFT_RED;
             // cool-looking things stay cool-coloured; cold engine reads blue
             if (p.pid == 0x0D || p.pid == 0x0F || p.pid == 0x46) color = TFT_CYAN;
             if (p.pid == 0x05 && v < 70) color = TFT_CYAN;
+            // signed gauges (trims, timing, ambient) need both ends
+            if (p.lo < 0) snprintf(sub, sizeof(sub), "%d / %d", pkMin[gi], pkMax[gi]);
+            else snprintf(sub, sizeof(sub), "max %d", pkMax[gi]);
         }
-        ui.gauge(p.label, buf, p.unit, frac, color);
+        ui.gauge(p.label, buf, p.unit, frac, color, sub[0] ? sub : nullptr);
         return;
     }
     if (page == battPage()) {
@@ -131,6 +165,42 @@ static void drawGauge()
         ui.dtcSummary(n == VAL_NONE ? -1 : n, mil);
     } else {
         ui.message("BLE SCAN", elm.hasSaved() ? "tap to scan" : "tap to scan & pick dongle");
+    }
+}
+
+// Poll the watched values regardless of which page is showing, so an overheat
+// still gets your attention while you're staring at the trim gauge.
+static void checkAlarms()
+{
+    if (!elm.protoReady() || millis() - lastWatch < WATCH_MS) return;
+    lastWatch = millis();
+    for (const Watch& w : kWatch) {
+        int v;
+        char detail[24];
+        if (w.pid == 0) {
+            float bv = elm.battVolts();
+            if (isnan(bv)) continue;
+            v = (int)(bv * 10);
+            snprintf(detail, sizeof(detail), "%.1f V", bv);
+        } else {
+            const PidDef* p = pidByNumber(w.pid);
+            if (!p || !elm.supports(w.pid)) continue;
+            v = elm.readPid(*p);
+            if (v == VAL_NONE) continue;
+            snprintf(detail, sizeof(detail), "%d %s", v, p->unit);
+        }
+        if (v >= w.lo && v <= w.hi) continue;
+        if (millis() - lastAlarm < ALARM_REPEAT_MS) continue;
+        lastAlarm = millis();
+        Serial.printf("[alarm] %s: %s\n", w.msg, detail);
+        for (int i = 0; i < 3; i++) {
+            beep();
+            delay(150);
+        }
+        ui.message(w.msg, detail);
+        delay(2000);
+        lastPoll = 0; // force the gauge back on screen
+        return;
     }
 }
 
@@ -165,6 +235,7 @@ void setup()
     attachInterrupt(digitalPinToInterrupt(DIAL_ENCODER_PIN_B), encIsr, CHANGE);
     encAnchor = s_encCount;
 
+    resetPeaks();
     buildPages();
     if (!elm.hasSaved()) page = scanPage(); // first run: pick a dongle
 }
@@ -192,6 +263,7 @@ void loop()
         if (elm.connect()) {
             beep();
             buildPages(); // the car just told us which PIDs it answers
+            resetPeaks(); // new session, new peaks
             if (page >= pageCount()) page = 0;
             lastPoll = 0;
         }
@@ -224,10 +296,19 @@ void loop()
                 mode = CODE_MENU;
                 ui.list("CODES", kCodeMenu, menuSel);
             }
+            if (hold && page < battPage()) {
+                resetPeaks();
+                beep();
+                ui.message("Peaks reset", "");
+                delay(800);
+                lastPoll = 0;
+                break;
+            }
             if (lastPoll == 0 || millis() - lastPoll >= POLL_MS) {
                 drawGauge();
                 lastPoll = millis();
             }
+            checkAlarms();
             break;
 
         case CODE_MENU:

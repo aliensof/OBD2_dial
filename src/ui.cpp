@@ -38,7 +38,7 @@ void Ui::connecting(const char* msg)
 }
 
 void Ui::gauge(const char* label, const char* value, const char* unit, float frac,
-               uint16_t arcColor)
+               uint16_t arcColor, const char* sub)
 {
     clear();
     canvas.drawArc(120, 120, 110, 118, 135, 45, TFT_DARKGREY);
@@ -55,6 +55,12 @@ void Ui::gauge(const char* label, const char* value, const char* unit, float fra
     canvas.setTextSize(strlen(value) > 4 ? 1.0f : 1.4f);
     canvas.setTextColor(TFT_WHITE);
     canvas.drawString(value, 120, 118);
+    if (sub) {
+        canvas.setFont(&fonts::Font2);
+        canvas.setTextSize(1);
+        canvas.setTextColor(TFT_DARKGREY);
+        canvas.drawString(sub, 120, 207);
+    }
     push();
 }
 

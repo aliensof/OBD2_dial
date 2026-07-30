@@ -30,6 +30,19 @@ int main()
     c = parseDtcs("4301D016\r>");
     assert(c.size() == 1 && c[0] == "U1016");
 
+    // Multi-frame CAN: 6 codes split across three "N:" lines, zero-padded.
+    // Single-frame parsing dropped all of these.
+    c = parseDtcs("014\r0: 43 06 01 71 01 72\r1: 03 01 03 02 03 03\r2: 03 04 00 00 00 00\r>");
+    assert(c.size() == 6);
+    assert(c[0] == "P0171" && c[1] == "P0172" && c[2] == "P0301");
+    assert(c[3] == "P0302" && c[4] == "P0303" && c[5] == "P0304");
+    // Two multi-frame replies back to back stay separate
+    auto j = joinFrames(elmLines("0:4302\r1:0301\r0:4301\r1:0171\r>"));
+    assert(j.size() == 2 && j[0] == "43020301" && j[1] == "43010171");
+    // Single-frame replies are untouched
+    j = joinFrames(elmLines("41 0C 1A F8\r>"));
+    assert(j.size() == 1 && j[0] == "410C1AF8");
+
     // Mode 07 pending codes frame exactly like mode 03, different prefix
     c = parseDtcs("47 01 01 71\r>", "47");
     assert(c.size() == 1 && c[0] == "P0171");

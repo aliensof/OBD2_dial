@@ -25,6 +25,7 @@ struct PidDef {
 };
 extern const PidDef kPids[];
 extern const int kPidCount;
+const PidDef* pidByNumber(uint8_t pid); // nullptr if not in the table
 
 // BLE central talking ELM327 AT/PID text protocol to an OBD2 dongle.
 class Elm327 {

@@ -72,10 +72,38 @@ static std::string decodeDtc(const std::string& four)
     return code;
 }
 
+// A CAN reply too big for one 8-byte frame comes back as a length header
+// ("014") followed by indexed data lines ("0:4306...", "1:0301..."). Splice
+// those back into one flat line so the caller sees single- and multi-frame
+// replies the same way; anything else passes through untouched.
+std::vector<std::string> joinFrames(const std::vector<std::string>& lines)
+{
+    std::vector<std::string> out;
+    std::string acc;
+    for (const std::string& l : lines) {
+        bool isFrame = l.size() > 2 && l[1] == ':' && hexVal(l[0]) >= 0;
+        if (isFrame && l[0] == '0' && !acc.empty()) { // next reply starts
+            out.push_back(acc);
+            acc.clear();
+        }
+        if (isFrame) {
+            acc += l.substr(2);
+            continue;
+        }
+        if (!acc.empty()) {
+            out.push_back(acc);
+            acc.clear();
+        }
+        out.push_back(l);
+    }
+    if (!acc.empty()) out.push_back(acc);
+    return out;
+}
+
 std::vector<std::string> parseDtcs(const std::string& raw, const char* mode)
 {
     std::vector<std::string> codes;
-    for (const std::string& line : elmLines(raw)) {
+    for (const std::string& line : joinFrames(elmLines(raw))) {
         if (line.size() < 6 || line.compare(0, 2, mode) != 0) continue;
         std::string rest = line.substr(2);
         if (!isHexStr(rest)) continue;

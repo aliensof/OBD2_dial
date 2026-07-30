@@ -325,6 +325,13 @@ const PidDef kPids[] = {
 };
 const int kPidCount = sizeof(kPids) / sizeof(kPids[0]);
 
+const PidDef* pidByNumber(uint8_t pid)
+{
+    for (int i = 0; i < kPidCount; i++)
+        if (kPids[i].pid == pid) return &kPids[i];
+    return nullptr;
+}
+
 int Elm327::readPid(const PidDef& p)
 {
     char req[8], echo[8];
