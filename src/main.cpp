@@ -27,21 +27,40 @@ static void IRAM_ATTR encIsr()
 static Elm327 elm;
 static Ui ui;
 
-enum Page { P_RPM, P_SPEED, P_COOLANT, P_BATT, P_INTAKE, P_LOAD, P_DTC, P_SCAN, PAGE_COUNT };
-enum Mode { GAUGES, CODE_MENU, DTC_LIST, DTC_CONFIRM, SCAN_LIST };
+enum Mode { GAUGES, CODE_MENU, DTC_LIST, DTC_CONFIRM, SCAN_LIST, INFO_LIST };
 
-static const std::vector<std::string> kCodeMenu = {"Fault codes", "Clear faults",
+static const std::vector<std::string> kCodeMenu = {"Fault codes", "Pending codes",
+                                                   "Freeze frame", "Clear faults",
                                                    "Service reset"};
 static int menuSel = 0;
 
+// Gauge pages come from kPids, filtered to what this car answers; the battery,
+// codes and scan pages always follow them.
+static std::vector<int> gauges;
+static int battPage() { return (int)gauges.size(); }
+static int dtcPage() { return battPage() + 1; }
+static int scanPage() { return battPage() + 2; }
+static int pageCount() { return battPage() + 3; }
+
+static void buildPages()
+{
+    gauges.clear();
+    for (int i = 0; i < kPidCount; i++)
+        // Before the car answers (demo mode, ignition off) show everything.
+        if (!elm.protoReady() || elm.supports(kPids[i].pid)) gauges.push_back(i);
+    Serial.printf("[ui] %d gauge pages\n", (int)gauges.size());
+}
+
 static Mode mode = GAUGES;
-static int page = P_RPM;
+static int page = 0;
 static long encAnchor = 0;
 static uint32_t lastPoll = 0;
 static std::vector<std::string> dtcs;
 static int dtcIdx = 0;
 static uint32_t confirmSince = 0;
 static bool demoMode = false; // browse the UI without a dongle
+static std::vector<std::string> infoLines; // freeze-frame text, scrolled in INFO_LIST
+static int infoIdx = 0;
 static std::vector<BleDev> scanResults;
 static std::vector<std::string> scanLabels;
 static int scanSel = 0;
@@ -81,64 +100,37 @@ static void drawGauge()
     char buf[16];
     float frac = -1;
     uint16_t color = TFT_GREEN;
-    int v;
-    switch (page) {
-        case P_RPM:
-            v = elm.rpm();
-            fmtVal(buf, sizeof(buf), v);
-            if (v != VAL_NONE) {
-                frac = v / 7000.0f;
-                if (frac > 0.85f) color = TFT_RED;
-            }
-            ui.gauge("RPM", buf, "x1000: 7 max", frac, color);
-            break;
-        case P_SPEED:
-            v = elm.speedKmh();
-            fmtVal(buf, sizeof(buf), v);
-            if (v != VAL_NONE) frac = v / 240.0f;
-            ui.gauge("SPEED", buf, "km/h", frac, TFT_CYAN);
-            break;
-        case P_COOLANT:
-            v = elm.coolantC();
-            fmtVal(buf, sizeof(buf), v);
-            if (v != VAL_NONE) {
-                frac = (v + 40) / 190.0f;
-                color = v > 105 ? TFT_RED : (v < 70 ? TFT_CYAN : TFT_GREEN);
-            }
-            ui.gauge("COOLANT", buf, "\xF7""C", frac, color);
-            break;
-        case P_BATT: {
-            float bv = elm.battVolts();
-            if (isnan(bv)) snprintf(buf, sizeof(buf), "--");
-            else snprintf(buf, sizeof(buf), "%.1f", bv);
-            if (!isnan(bv)) {
-                frac = (bv - 10.0f) / 5.0f;
-                color = bv < 11.8f ? TFT_RED : TFT_GREEN;
-            }
-            ui.gauge("BATTERY", buf, "V", frac, color);
-            break;
+
+    if (page < battPage()) {
+        const PidDef& p = kPids[gauges[page]];
+        int v = elm.readPid(p);
+        fmtVal(buf, sizeof(buf), v);
+        if (v != VAL_NONE) {
+            frac = (float)(v - p.lo) / (p.hi - p.lo);
+            if (frac > 0.85f) color = TFT_RED;
+            // cool-looking things stay cool-coloured; cold engine reads blue
+            if (p.pid == 0x0D || p.pid == 0x0F || p.pid == 0x46) color = TFT_CYAN;
+            if (p.pid == 0x05 && v < 70) color = TFT_CYAN;
         }
-        case P_INTAKE:
-            v = elm.intakeC();
-            fmtVal(buf, sizeof(buf), v);
-            if (v != VAL_NONE) frac = (v + 40) / 130.0f;
-            ui.gauge("INTAKE", buf, "\xF7""C", frac, TFT_CYAN);
-            break;
-        case P_LOAD:
-            v = elm.loadPct();
-            fmtVal(buf, sizeof(buf), v);
-            if (v != VAL_NONE) frac = v / 100.0f;
-            ui.gauge("LOAD", buf, "%", frac, TFT_GREEN);
-            break;
-        case P_DTC: {
-            bool mil = false;
-            int n = elm.dtcCount(mil);
-            ui.dtcSummary(n == VAL_NONE ? -1 : n, mil);
-            break;
+        ui.gauge(p.label, buf, p.unit, frac, color);
+        return;
+    }
+    if (page == battPage()) {
+        float bv = elm.battVolts();
+        if (isnan(bv)) {
+            snprintf(buf, sizeof(buf), "--");
+        } else {
+            snprintf(buf, sizeof(buf), "%.1f", bv);
+            frac = (bv - 10.0f) / 5.0f;
+            color = bv < 11.8f ? TFT_RED : TFT_GREEN;
         }
-        case P_SCAN:
-            ui.message("BLE SCAN", elm.hasSaved() ? "tap to scan" : "tap to scan & pick dongle");
-            break;
+        ui.gauge("BATTERY", buf, "V", frac, color);
+    } else if (page == dtcPage()) {
+        bool mil = false;
+        int n = elm.dtcCount(mil);
+        ui.dtcSummary(n == VAL_NONE ? -1 : n, mil);
+    } else {
+        ui.message("BLE SCAN", elm.hasSaved() ? "tap to scan" : "tap to scan & pick dongle");
     }
 }
 
@@ -173,7 +165,8 @@ void setup()
     attachInterrupt(digitalPinToInterrupt(DIAL_ENCODER_PIN_B), encIsr, CHANGE);
     encAnchor = s_encCount;
 
-    if (!elm.hasSaved()) page = P_SCAN; // first run: pick a dongle
+    buildPages();
+    if (!elm.hasSaved()) page = scanPage(); // first run: pick a dongle
 }
 
 void loop()
@@ -198,6 +191,8 @@ void loop()
         ui.connecting("Connecting...");
         if (elm.connect()) {
             beep();
+            buildPages(); // the car just told us which PIDs it answers
+            if (page >= pageCount()) page = 0;
             lastPoll = 0;
         }
         return;
@@ -210,11 +205,11 @@ void loop()
     switch (mode) {
         case GAUGES:
             if (d) {
-                page = ((page + d) % PAGE_COUNT + PAGE_COUNT) % PAGE_COUNT;
+                page = ((page + d) % pageCount() + pageCount()) % pageCount();
                 lastPoll = 0;
                 beep();
             }
-            if (page == P_SCAN && tap) {
+            if (page == scanPage() && tap) {
                 ui.message("Scanning...", "5 sec");
                 scanResults = elm.scanBle();
                 scanLabels.clear();
@@ -224,7 +219,7 @@ void loop()
                 ui.list("BLE DEVICES", scanLabels, scanSel);
                 break;
             }
-            if (page == P_DTC && tap) {
+            if (page == dtcPage() && tap) {
                 menuSel = 0;
                 mode = CODE_MENU;
                 ui.list("CODES", kCodeMenu, menuSel);
@@ -242,14 +237,26 @@ void loop()
                 break;
             }
             if (tap) {
-                if (menuSel == 0) {
+                if (menuSel == 0 || menuSel == 1) {
                     ui.message("Reading...", "");
-                    dtcs = elm.readDtcs();
+                    dtcs = menuSel == 0 ? elm.readDtcs() : elm.readPending();
                     dtcIdx = 0;
                     mode = DTC_LIST;
                     showDtcList();
                     lastPoll = millis();
-                } else if (menuSel == 1) {
+                } else if (menuSel == 2) {
+                    ui.message("Reading...", "freeze frame");
+                    infoLines = elm.freezeFrame();
+                    infoIdx = 0;
+                    if (infoLines.empty()) {
+                        ui.message("No freeze frame", "no stored fault");
+                        delay(2000);
+                        ui.list("CODES", kCodeMenu, menuSel);
+                    } else {
+                        mode = INFO_LIST;
+                        ui.list("FREEZE FRAME", infoLines, infoIdx);
+                    }
+                } else if (menuSel == 3) {
                     mode = DTC_CONFIRM;
                     confirmSince = millis();
                     ui.confirmClear();
@@ -294,11 +301,25 @@ void loop()
                 delay(1500);
                 dtcs.clear();
                 mode = GAUGES;
-                page = P_DTC;
+                page = dtcPage();
                 lastPoll = 0;
             } else if (d || millis() - confirmSince > 8000) {
                 mode = CODE_MENU;
                 ui.list("CODES", kCodeMenu, menuSel);
+            }
+            break;
+
+        case INFO_LIST:
+            if (tap || hold) {
+                mode = CODE_MENU;
+                ui.list("CODES", kCodeMenu, menuSel);
+                break;
+            }
+            if (d) {
+                infoIdx += d;
+                if (infoIdx >= (int)infoLines.size()) infoIdx = infoLines.size() - 1;
+                if (infoIdx < 0) infoIdx = 0;
+                ui.list("FREEZE FRAME", infoLines, infoIdx);
             }
             break;
 
@@ -315,7 +336,7 @@ void loop()
                 delay(1000);
                 demoMode = false;
                 mode = GAUGES;
-                page = P_RPM;
+                page = 0;
                 lastPoll = 0;
                 break;
             }

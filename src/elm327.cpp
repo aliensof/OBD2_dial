@@ -210,14 +210,38 @@ bool Elm327::connect()
 bool Elm327::ensureProto()
 {
     if (m_proto) return true;
-    std::string r = cmd("0100", 10000); // protocol search can be slow
-    if (r.find("4100") != std::string::npos || r.find("41 00") != std::string::npos) {
+    loadSupport();
+    if (m_supp[0]) {
         m_proto = true;
         m_status = "Car online";
     } else {
         m_status = "Ignition off?";
     }
     return m_proto;
+}
+
+// PIDs 00/20/40 return a 32-bit "which of the next 32 PIDs do I answer" mask,
+// and each mask's low bit says whether the following block exists.
+void Elm327::loadSupport()
+{
+    static const char* req[3] = {"0100", "0120", "0140"};
+    static const char* echo[3] = {"4100", "4120", "4140"};
+    for (int i = 0; i < 3; i++) {
+        m_supp[i] = 0;
+        uint8_t b[4];
+        std::string r = cmd(req[i], i ? 3000 : 10000); // first one may search protocols
+        if (!pidBytes(r, echo[i], b, 4)) break;
+        m_supp[i] = ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | b[3];
+        LOG("[elm] supported %s = %08X\n", req[i], (unsigned)m_supp[i]);
+        if (!(m_supp[i] & 1)) break; // low bit = "next block supported"
+    }
+}
+
+bool Elm327::supports(uint8_t pid) const
+{
+    if (pid == 0 || pid > 0x60) return false;
+    int blk = (pid - 1) / 0x20;
+    return m_supp[blk] & (1u << (31 - ((pid - 1) % 0x20)));
 }
 
 std::string Elm327::cmd(const std::string& c, uint32_t timeoutMs)
@@ -262,42 +286,52 @@ static bool errResp(const std::string& r)
            r.find("UNABLE") != std::string::npos || r.find("ERROR") != std::string::npos;
 }
 
-bool Elm327::readPid(const char* pid, const char* echo, uint8_t* out, int n)
+bool Elm327::readBytes(const std::string& req, const std::string& echo, uint8_t* out, int n)
 {
     if (!m_proto && !ensureProto()) return false;
-    std::string r = cmd(pid);
+    std::string r = cmd(req);
     if (errResp(r)) return false;
     return pidBytes(r, echo, out, n);
 }
 
-int Elm327::rpm()
-{
-    uint8_t b[2];
-    return readPid("010C", "410C", b, 2) ? (b[0] * 256 + b[1]) / 4 : VAL_NONE;
-}
+static int dRpm(const uint8_t* b) { return (b[0] * 256 + b[1]) / 4; }
+static int dRaw(const uint8_t* b) { return b[0]; }
+static int dU16(const uint8_t* b) { return b[0] * 256 + b[1]; }
+static int dTemp(const uint8_t* b) { return b[0] - 40; }
+static int dPct(const uint8_t* b) { return b[0] * 100 / 255; }
+static int dTrim(const uint8_t* b) { return (b[0] - 128) * 100 / 128; } // signed, -100..+99%
+static int dMaf(const uint8_t* b) { return (b[0] * 256 + b[1]) / 100; } // g/s
+static int dTiming(const uint8_t* b) { return b[0] / 2 - 64; }         // deg before TDC
+static int dMinutes(const uint8_t* b) { return (b[0] * 256 + b[1]) / 60; }
 
-int Elm327::speedKmh()
-{
-    uint8_t b[1];
-    return readPid("010D", "410D", b, 1) ? b[0] : VAL_NONE;
-}
+// Gauge order = rotation order. Unsupported PIDs are dropped at connect time,
+// so a car that has no MAF or no fuel-level sender simply won't show those pages.
+const PidDef kPids[] = {
+    {0x0C, 2, "RPM", "rpm", dRpm, 0, 7000},
+    {0x0D, 1, "SPEED", "km/h", dRaw, 0, 240},
+    {0x05, 1, "COOLANT", "\xF7""C", dTemp, -40, 150},
+    {0x0F, 1, "INTAKE", "\xF7""C", dTemp, -40, 90},
+    {0x04, 1, "LOAD", "%", dPct, 0, 100},
+    {0x11, 1, "THROTTLE", "%", dPct, 0, 100},
+    {0x0B, 1, "MAP", "kPa", dRaw, 0, 255},
+    {0x10, 2, "MAF", "g/s", dMaf, 0, 200},
+    {0x06, 1, "SHORT TRIM", "%", dTrim, -25, 25},
+    {0x07, 1, "LONG TRIM", "%", dTrim, -25, 25},
+    {0x0E, 1, "TIMING", "\xF7", dTiming, -20, 60},
+    {0x2F, 1, "FUEL", "%", dPct, 0, 100},
+    {0x46, 1, "AMBIENT", "\xF7""C", dTemp, -40, 60},
+    {0x1F, 2, "RUN TIME", "min", dMinutes, 0, 120},
+    {0x21, 2, "MIL DIST", "km", dU16, 0, 1000},
+};
+const int kPidCount = sizeof(kPids) / sizeof(kPids[0]);
 
-int Elm327::coolantC()
+int Elm327::readPid(const PidDef& p)
 {
-    uint8_t b[1];
-    return readPid("0105", "4105", b, 1) ? b[0] - 40 : VAL_NONE;
-}
-
-int Elm327::intakeC()
-{
-    uint8_t b[1];
-    return readPid("010F", "410F", b, 1) ? b[0] - 40 : VAL_NONE;
-}
-
-int Elm327::loadPct()
-{
-    uint8_t b[1];
-    return readPid("0104", "4104", b, 1) ? b[0] * 100 / 255 : VAL_NONE;
+    char req[8], echo[8];
+    snprintf(req, sizeof(req), "01%02X", p.pid);
+    snprintf(echo, sizeof(echo), "41%02X", p.pid);
+    uint8_t b[4];
+    return readBytes(req, echo, b, p.nbytes) ? p.dec(b) : VAL_NONE;
 }
 
 float Elm327::battVolts()
@@ -315,7 +349,7 @@ float Elm327::battVolts()
 int Elm327::dtcCount(bool& milOn)
 {
     uint8_t b[4];
-    if (!readPid("0101", "4101", b, 4)) return VAL_NONE;
+    if (!readBytes("0101", "4101", b, 4)) return VAL_NONE;
     milOn = b[0] & 0x80;
     return b[0] & 0x7F;
 }
@@ -324,6 +358,39 @@ std::vector<std::string> Elm327::readDtcs()
 {
     if (!m_proto && !ensureProto()) return {};
     return parseDtcs(cmd("03", 8000));
+}
+
+std::vector<std::string> Elm327::readPending()
+{
+    if (!m_proto && !ensureProto()) return {};
+    return parseDtcs(cmd("07", 8000), "47");
+}
+
+// Mode 02 replays the sensor values recorded when the fault was stored. Frame 0
+// is the only one every ECU keeps. Response is "42 <pid> <frame> <data...>", so
+// we read one byte more than the PID needs and skip the frame number.
+std::vector<std::string> Elm327::freezeFrame()
+{
+    std::vector<std::string> lines;
+    if (!m_proto && !ensureProto()) return lines;
+
+    // PID 02 is the fault that froze the frame. No fault, no frame — bail out
+    // here rather than timing out once per PID below.
+    uint8_t b[5];
+    char req[8], echo[8], line[32];
+    if (!readBytes("020200", "4202", b, 3) || (!b[1] && !b[2])) return lines;
+    lines.push_back("DTC " + dtcFromBytes(b[1], b[2]));
+
+    for (int i = 0; i < kPidCount; i++) {
+        const PidDef& p = kPids[i];
+        if (!supports(p.pid)) continue;
+        snprintf(req, sizeof(req), "02%02X00", p.pid);
+        snprintf(echo, sizeof(echo), "42%02X", p.pid);
+        if (!readBytes(req, echo, b, p.nbytes + 1)) continue;
+        snprintf(line, sizeof(line), "%s %d%s", p.label, p.dec(b + 1), p.unit);
+        lines.push_back(line);
+    }
+    return lines;
 }
 
 bool Elm327::clearDtcs()

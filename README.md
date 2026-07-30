@@ -8,8 +8,8 @@ M5Stack Dial as a BLE OBD2 display: connects to a BLE ELM327 dongle, shows live 
 
 **Daily use:**
 
-- **Rotate** to switch pages: RPM, Speed, Coolant, Battery, Intake, Load, Codes, BLE Scan.
-- **CODES page**: tap for the menu — *Fault codes* (read + scroll, e.g. `P0301 — Cyl 1 misfire`), *Clear faults* (red confirm screen, tap to confirm), *Service reset* (VW-specific, not implemented yet — needs TP2.0, not standard OBD2). Hold to exit the menu.
+- **Rotate** to switch pages: RPM, Speed, Coolant, Intake, Load, Throttle, MAP, MAF, Short/Long fuel trim, Timing, Fuel level, Ambient, Run time, Distance-with-MIL, then Battery, Codes, BLE Scan. The gauge pages are filtered to the PIDs your car actually answers (asked once per connect via `0100`/`0120`/`0140`), so the rotation only holds pages that work.
+- **CODES page**: tap for the menu — *Fault codes* (mode 03, read + scroll, e.g. `P0301 — Cyl 1 misfire`), *Pending codes* (mode 07, faults not yet confirmed by the MIL), *Freeze frame* (mode 02 — the sensor snapshot recorded when the fault stored), *Clear faults* (red confirm screen, tap to confirm), *Service reset* (VW-specific, not implemented yet — needs TP2.0, not standard OBD2). Hold to exit the menu.
 - **Connect screen**: tap to skip into demo mode (browse the UI without a car; values show `--`).
 - Ignition off / dongle out of range → gauges show `--` and the Dial keeps retrying.
 

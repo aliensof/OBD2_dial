@@ -30,6 +30,16 @@ int main()
     c = parseDtcs("4301D016\r>");
     assert(c.size() == 1 && c[0] == "U1016");
 
+    // Mode 07 pending codes frame exactly like mode 03, different prefix
+    c = parseDtcs("47 01 01 71\r>", "47");
+    assert(c.size() == 1 && c[0] == "P0171");
+    assert(parseDtcs("47 01 01 71\r>").empty()); // not mistaken for mode 03
+
+    // Raw DTC byte pairs (mode 02 freeze-frame PID 02)
+    assert(dtcFromBytes(0x03, 0x01) == "P0301");
+    assert(dtcFromBytes(0xD0, 0x16) == "U1016");
+    assert(dtcFromBytes(0x01, 0x71) == "P0171");
+
     // Descriptions
     assert(strcmp(dtcDescription("P0301"), "Cyl 1 misfire") == 0);
     assert(strcmp(dtcDescription("P1234"), "Manufacturer code") == 0);

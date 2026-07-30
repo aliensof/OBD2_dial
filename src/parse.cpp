@@ -1,6 +1,7 @@
 #include "parse.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 
 static int hexVal(char c)
 {
@@ -52,6 +53,14 @@ bool pidBytes(const std::string& raw, const std::string& echo, uint8_t* out, int
     return false;
 }
 
+std::string dtcFromBytes(uint8_t hi, uint8_t lo)
+{
+    static const char letters[] = "PCBU";
+    char buf[6];
+    snprintf(buf, sizeof(buf), "%c%d%X%02X", letters[hi >> 6], (hi >> 4) & 3, hi & 0x0F, lo);
+    return buf;
+}
+
 static std::string decodeDtc(const std::string& four)
 {
     static const char letters[] = "PCBU";
@@ -63,11 +72,11 @@ static std::string decodeDtc(const std::string& four)
     return code;
 }
 
-std::vector<std::string> parseDtcs(const std::string& raw)
+std::vector<std::string> parseDtcs(const std::string& raw, const char* mode)
 {
     std::vector<std::string> codes;
     for (const std::string& line : elmLines(raw)) {
-        if (line.size() < 6 || line.compare(0, 2, "43") != 0) continue;
+        if (line.size() < 6 || line.compare(0, 2, mode) != 0) continue;
         std::string rest = line.substr(2);
         if (!isHexStr(rest)) continue;
         // CAN: "43" + count byte + N*2 bytes -> rest length % 4 == 2
