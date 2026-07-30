@@ -38,3 +38,6 @@ cd test/host && g++ -std=c++11 -I../../src parse_check.cpp ../../src/parse.cpp -
 Serial logging needs `-DARDUINO_USB_CDC_ON_BOOT=1` (the StampS3 board sets `ARDUINO_USB_MODE=1` but not this, so `Serial` would go to UART0, not the USB-C port). Build with `-DOBD2_TRACE` to log every command and response.
 
 Design notes: `docs/superpowers/specs/2026-07-18-obd2-dial-design.md`
+
+Current state, what's still unverified against a real car, and the planned
+flash-logging design: `docs/next-steps.md`
